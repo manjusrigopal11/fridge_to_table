@@ -1,0 +1,6 @@
+{
+  "name": "Fridge-to-Table",
+  "description": "Smart Fridge-to-Table recipe generator turning 3 random ingredients into chef-quality meals in seconds with Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
