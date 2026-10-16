@@ -9,20 +9,65 @@ import com.example.data.model.GeminiGenerationConfig
 import com.example.data.model.GeminiInlineData
 import com.example.data.model.GeminiPart
 import com.example.data.model.GeminiRequest
+import com.example.data.model.GeminiResponse
+import com.example.data.model.NutritionInfo
 import com.example.data.model.Recipe
 import com.example.data.model.RecipeStep
 import com.example.data.network.ApiClient
 import com.squareup.moshi.Types
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import retrofit2.HttpException
 import java.io.ByteArrayOutputStream
 
 sealed class GenerationResult {
-    data class Success(val recipe: Recipe, val isFromLiveGemini: Boolean) : GenerationResult()
+    data class Success(
+        val recipe: Recipe,
+        val isFromLiveGemini: Boolean,
+        val statusMessage: String? = null
+    ) : GenerationResult()
     data class Error(val message: String, val fallbackRecipe: Recipe? = null) : GenerationResult()
 }
 
 class RecipeRepository {
+
+    private val candidateModels = listOf(
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite-preview"
+    )
+
+    private suspend fun callGeminiWithFallback(apiKey: String, request: GeminiRequest): GeminiResponse {
+        var lastException: Exception? = null
+        for (model in candidateModels) {
+            for (attempt in 1..2) {
+                try {
+                    Log.d("RecipeRepository", "Calling Gemini with model: $model (attempt $attempt)")
+                    return ApiClient.geminiService.generateContent(model = model, apiKey = apiKey, request = request)
+                } catch (e: HttpException) {
+                    lastException = e
+                    val code = e.code()
+                    val errorDetails = try { e.response()?.errorBody()?.string() } catch (ignored: Exception) { null }
+                    Log.w("RecipeRepository", "Gemini HTTP $code on model $model (attempt $attempt): $errorDetails")
+                    if (code == 503 || code == 429 || code == 500 || code == 502 || code == 504) {
+                        delay(500L * attempt)
+                        if (attempt == 2) break
+                    } else {
+                        // If model not found or forbidden, try next candidate model
+                        break
+                    }
+                } catch (e: Exception) {
+                    lastException = e
+                    Log.w("RecipeRepository", "Network error on model $model (attempt $attempt): ${e.message}")
+                    delay(300L)
+                    if (attempt == 2) break
+                }
+            }
+        }
+        throw lastException ?: RuntimeException("All Gemini candidate models failed")
+    }
 
     suspend fun identifyIngredientsFromImage(bitmap: Bitmap): List<String> = withContext(Dispatchers.IO) {
         val apiKey = BuildConfig.GEMINI_API_KEY.trim()
@@ -54,7 +99,7 @@ class RecipeRepository {
                     )
                 )
 
-                val response = ApiClient.geminiService.generateContent(apiKey, request)
+                val response = callGeminiWithFallback(apiKey, request)
                 val textContent = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                 if (!textContent.isNullOrBlank()) {
                     val clean = cleanJsonResponse(textContent)
@@ -66,7 +111,7 @@ class RecipeRepository {
                     }
                 }
             } catch (e: Exception) {
-                Log.e("RecipeRepository", "Error detecting ingredients with Gemini Vision", e)
+                Log.e("RecipeRepository", "Error detecting ingredients with Gemini Vision: ${e.message}", e)
             }
         }
 
@@ -88,7 +133,11 @@ class RecipeRepository {
         if (!hasLiveKey) {
             // Provide immediate smart fallback recipe and inform user
             val fallback = createSmartFallbackRecipe(ingredient1, ingredient2, ingredient3, preference, dietaryRestrictions, variationSeed)
-            return@withContext GenerationResult.Success(fallback, isFromLiveGemini = false)
+            return@withContext GenerationResult.Success(
+                recipe = fallback,
+                isFromLiveGemini = false,
+                statusMessage = "Generated instantly! (Add GEMINI_API_KEY in Secrets for live cloud AI)"
+            )
         }
 
         try {
@@ -106,12 +155,16 @@ class RecipeRepository {
                 )
             )
 
-            val response = ApiClient.geminiService.generateContent(apiKey, request)
+            val response = callGeminiWithFallback(apiKey, request)
             val textContent = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
 
             if (textContent.isNullOrBlank()) {
                 val fallback = createSmartFallbackRecipe(ingredient1, ingredient2, ingredient3, preference, dietaryRestrictions, variationSeed)
-                return@withContext GenerationResult.Success(fallback, isFromLiveGemini = false)
+                return@withContext GenerationResult.Success(
+                    recipe = fallback,
+                    isFromLiveGemini = false,
+                    statusMessage = "Gemini returned empty response. Prepared via smart culinary engine!"
+                )
             }
 
             val cleanJson = cleanJsonResponse(textContent)
@@ -120,22 +173,43 @@ class RecipeRepository {
 
             if (parsedRecipe != null) {
                 // Ensure dietary tags from user selection are reflected if not populated
-                val finalRecipe = if (parsedRecipe.dietaryTags.isEmpty() && dietaryRestrictions.isNotEmpty()) {
+                val withDietary = if (parsedRecipe.dietaryTags.isEmpty() && dietaryRestrictions.isNotEmpty()) {
                     parsedRecipe.copy(dietaryTags = dietaryRestrictions)
                 } else {
                     parsedRecipe
                 }
-                GenerationResult.Success(finalRecipe, isFromLiveGemini = true)
+                val enrichedInstructions = withDietary.instructions.map { step ->
+                    if (step.timerSeconds == null || step.timerSeconds <= 0) {
+                        val parsed = com.example.data.model.parseCookingTimeSeconds(step.description)
+                        if (parsed != null && parsed > 0) step.copy(timerSeconds = parsed) else step
+                    } else step
+                }
+                val finalRecipe = withDietary.copy(instructions = enrichedInstructions)
+                GenerationResult.Success(
+                    recipe = finalRecipe,
+                    isFromLiveGemini = true,
+                    statusMessage = "Recipe generated fresh by Gemini AI!"
+                )
             } else {
                 val fallback = createSmartFallbackRecipe(ingredient1, ingredient2, ingredient3, preference, dietaryRestrictions, variationSeed)
-                GenerationResult.Success(fallback, isFromLiveGemini = false)
+                GenerationResult.Success(
+                    recipe = fallback,
+                    isFromLiveGemini = false,
+                    statusMessage = "Prepared via smart culinary engine!"
+                )
             }
         } catch (e: Exception) {
-            Log.e("RecipeRepository", "Gemini API error, using smart fallback", e)
+            Log.e("RecipeRepository", "Gemini API error after fallbacks: ${e.message}", e)
             val fallback = createSmartFallbackRecipe(ingredient1, ingredient2, ingredient3, preference, dietaryRestrictions, variationSeed)
-            GenerationResult.Success(fallback, isFromLiveGemini = false)
+            val reason = if (e is HttpException) "HTTP ${e.code()}" else "Network error"
+            GenerationResult.Success(
+                recipe = fallback,
+                isFromLiveGemini = false,
+                statusMessage = "Gemini service temporarily busy ($reason). Prepared delicious recipe with smart chef engine!"
+            )
         }
     }
+
 
     private fun cleanJsonResponse(raw: String): String {
         return raw.trim()
@@ -159,21 +233,22 @@ class RecipeRepository {
 
         val dietaryDirectives = if (dietaryRestrictions.isNotEmpty()) {
             """
-            MANDATORY DIETARY RESTRICTIONS:
-            The user requires this meal to strictly adhere to: ${dietaryRestrictions.joinToString(", ")}.
-            You MUST follow these dietary rules without exception:
+            CRITICAL DIETARY CONSTRAINTS (STRICT ENFORCEMENT REQUIRED):
+            The user explicitly selected the following dietary lifestyle filters: ${dietaryRestrictions.joinToString(", ")}.
+            You MUST strictly satisfy each requirement without exception:
             ${dietaryRestrictions.joinToString("\n") { restriction ->
-                when (restriction.lowercase()) {
-                    "vegetarian" -> "- Vegetarian: Absolutely NO meat, poultry, fish, seafood, gelatin, or animal lard. Plant-based and dairy/eggs only."
-                    "vegan" -> "- Vegan: 100% plant-based ONLY. Absolutely NO meat, fish, poultry, eggs, dairy, cheese, butter, cream, or honey."
-                    "gluten-free" -> "- Gluten-Free: Absolutely NO wheat, barley, rye, standard pasta, or wheat flour. If using soy sauce, explicitly specify Tamari or gluten-free soy sauce. No gluten thickeners."
-                    "dairy-free" -> "- Dairy-Free: Absolutely NO cow/goat butter, cheese, milk, cream, or yogurt. Use olive oil, vegetable oils, or plant milk."
-                    "keto / low-carb" -> "- Keto / Low-Carb: Minimize high-starch carbs (rice, pasta, bread, potatoes, sugar) and emphasize low-carb greens, healthy fats, and protein."
-                    "nut-free" -> "- Nut-Free: Absolutely NO peanuts, tree nuts, or nut oils."
-                    else -> "- $restriction: strictly respect this dietary guideline."
+                when (restriction.lowercase().trim()) {
+                    "vegan" -> "- [VEGAN STRICT]: 100% plant-based ONLY. Absolutely ZERO meat, poultry, fish, seafood, eggs, milk, cream, cheese, butter, lard, gelatin, or honey. If an entered ingredient is an animal product (like eggs or dairy), suggest an ingenious plant-based substitute or highlight the other ingredients with vegan pantry staples (e.g. tofu scramble, flax egg, nutritional yeast, plant milk, olive oil)."
+                    "gluten-free" -> "- [GLUTEN-FREE STRICT]: Absolutely ZERO wheat, barley, rye, malt, standard pasta, wheat flour, or regular bread. If soy sauce is called for, explicitly specify 'Tamari (Gluten-Free Soy Sauce)'. Never use wheat flour for thickening; use cornstarch or arrowroot."
+                    "low-carb", "keto", "keto / low-carb" -> "- [LOW-CARB STRICT]: Keep total carbohydrates under 15g per serving. Avoid high-starch carbs (white/brown rice, wheat pasta, potatoes, bread, added sugars). Prioritize high-fiber greens, cruciferous vegetables, proteins, and healthy cooking fats. If rice was provided, suggest cauliflower rice or portioning."
+                    "high-protein" -> "- [HIGH-PROTEIN]: Maximize protein density (target 25g+ protein per serving). Emphasize egg whites, poultry, tofu, or legumes with high-protein cooking methods."
+                    "vegetarian" -> "- [VEGETARIAN STRICT]: Absolutely NO meat, poultry, beef, pork, chicken, fish, seafood, gelatin, or animal stocks. Eggs and dairy are permitted."
+                    "dairy-free" -> "- [DAIRY-FREE STRICT]: Absolutely NO cow/goat butter, cheese, milk, heavy cream, sour cream, or yogurt. Use olive oil, vegetable oils, or plant milk exclusively."
+                    "nut-free" -> "- [NUT-FREE STRICT]: Strictly NO peanuts, tree nuts, or nut-derived oils."
+                    else -> "- [$restriction]: Strictly enforce this dietary guideline in ingredients, pantry staples, and cooking steps."
                 }
             }}
-            Verify that all input ingredients and pantry additions 100% conform to these rules.
+            Double-check every single ingredient in 'inputIngredients' and 'pantryStaples' to guarantee 100% compliance with these constraints.
             """.trimIndent()
         } else {
             "Dietary restrictions: None specified."
@@ -194,6 +269,13 @@ class RecipeRepository {
         Assume only standard pantry staples are on hand (cooking oil/butter, salt, black pepper, water, minced garlic or onion, soy sauce, or vinegar).
         Do not require exotic grocery store trips. Every step must be practical and achievable in a home kitchen.
 
+        NUTRITION REQUIREMENT:
+        Calculate and provide a realistic estimated nutritional breakdown per serving in the "nutrition" object:
+        - "calories": Estimated calories (e.g., "380 kcal")
+        - "protein": Estimated protein in grams (e.g., "16g")
+        - "carbs": Estimated total carbohydrates in grams (e.g., "42g")
+        - "fat": Estimated dietary fat in grams (e.g., "14g")
+
         Format your entire response as a JSON object with this exact structure:
         {
           "title": "Creative appetizing recipe title",
@@ -204,6 +286,12 @@ class RecipeRepository {
           "difficulty": "Easy",
           "servings": "1-2 servings",
           "caloriesEstimate": "e.g. ~380 kcal",
+          "nutrition": {
+            "calories": "380 kcal",
+            "protein": "16g",
+            "carbs": "42g",
+            "fat": "14g"
+          },
           "flavorProfile": "e.g. Savory, Crispy & Herbaceous",
           "dietaryTags": ["${dietaryRestrictions.joinToString("\", \"").ifEmpty { "Quick" }}"],
           "inputIngredients": [
@@ -262,6 +350,12 @@ class RecipeRepository {
                     difficulty = "Easy",
                     servings = "1-2 servings",
                     caloriesEstimate = "~390 kcal",
+                    nutrition = NutritionInfo(
+                        calories = "390 kcal",
+                        protein = "18g",
+                        carbs = "48g",
+                        fat = "14g"
+                    ),
                     flavorProfile = "Savory, Crispy & Rich",
                     dietaryTags = tags,
                     inputIngredients = listOf(
@@ -294,6 +388,12 @@ class RecipeRepository {
                     difficulty = "Easy",
                     servings = "1-2 servings",
                     caloriesEstimate = "~380 kcal",
+                    nutrition = NutritionInfo(
+                        calories = "380 kcal",
+                        protein = "16g",
+                        carbs = "46g",
+                        fat = "13g"
+                    ),
                     flavorProfile = "Umami, Toasty & Aromatic",
                     dietaryTags = tags,
                     inputIngredients = listOf(
@@ -326,6 +426,13 @@ class RecipeRepository {
             else -> "Rustic Sauté of ${capitalizeWords(ing1)}, ${capitalizeWords(ing2)} and ${capitalizeWords(ing3)}"
         }
 
+        val isHighProtein = all.contains("egg") || all.contains("chicken") || all.contains("tofu") || all.contains("beef") || all.contains("fish") || all.contains("salmon") || all.contains("turkey") || all.contains("tuna")
+        val isHighCarb = all.contains("rice") || all.contains("pasta") || all.contains("bread") || all.contains("potato") || all.contains("noodle") || all.contains("tortilla") || all.contains("quinoa")
+        val estimatedProtein = if (isHighProtein) "22g" else "12g"
+        val estimatedCarbs = if (isHighCarb) "52g" else "24g"
+        val estimatedFat = if (all.contains("cheese") || all.contains("butter") || all.contains("avocado") || all.contains("oil")) "18g" else "12g"
+        val estimatedCals = if (isHighCarb && isHighProtein) "420 kcal" else if (isHighCarb || isHighProtein) "380 kcal" else "290 kcal"
+
         return Recipe(
             title = titleFormat,
             tagline = "A fast, balanced meal tailored from your fridge ingredients with minimal clean-up",
@@ -334,7 +441,13 @@ class RecipeRepository {
             totalTime = "15 mins",
             difficulty = "Easy",
             servings = "1-2 servings",
-            caloriesEstimate = "~350-420 kcal",
+            caloriesEstimate = estimatedCals,
+            nutrition = NutritionInfo(
+                calories = estimatedCals,
+                protein = estimatedProtein,
+                carbs = estimatedCarbs,
+                fat = estimatedFat
+            ),
             flavorProfile = "Savory, Balanced & Fresh",
             dietaryTags = tags,
             inputIngredients = listOf(

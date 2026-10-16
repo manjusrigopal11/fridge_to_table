@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,6 +52,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.Recipe
 import com.example.data.model.RecipeStep
+import com.example.data.model.effectiveTimerSeconds
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +64,7 @@ fun CookingModeDialog(
     onStartTimer: (RecipeStep) -> Unit,
     onNextStep: () -> Unit,
     onPrevStep: () -> Unit,
+    onShare: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     BackHandler { onDismiss() }
@@ -99,6 +102,18 @@ fun CookingModeDialog(
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.Default.Close, contentDescription = "Exit Cooking Mode")
+                        }
+                    },
+                    actions = {
+                        IconButton(
+                            onClick = onShare,
+                            modifier = Modifier.testTag("cooking_mode_share_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Share Recipe",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -208,14 +223,15 @@ fun CookingModeDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            if (step.timerSeconds != null && step.timerSeconds > 0) {
+                            val effectiveSec = step.effectiveTimerSeconds()
+                            if (effectiveSec != null && effectiveSec > 0) {
                                 Spacer(modifier = Modifier.height(24.dp))
-                                val minutes = step.timerSeconds / 60
-                                val seconds = step.timerSeconds % 60
-                                val timeText = if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+                                val minutes = effectiveSec / 60
+                                val seconds = effectiveSec % 60
+                                val timeText = if (minutes > 0 && seconds > 0) "${minutes}m ${seconds}s" else if (minutes > 0) "${minutes}m" else "${seconds}s"
 
                                 Button(
-                                    onClick = { onStartTimer(step) },
+                                    onClick = { onStartTimer(step.copy(timerSeconds = effectiveSec)) },
                                     shape = RoundedCornerShape(16.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = MaterialTheme.colorScheme.secondary

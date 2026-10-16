@@ -18,18 +18,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -50,6 +53,7 @@ fun ActiveTimerCard(
     onPauseResume: () -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
+    onAddMinute: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -60,7 +64,7 @@ fun ActiveTimerCard(
         if (step == null) return@AnimatedVisibility
 
         val progress = if (totalSeconds > 0) {
-            remainingSeconds.toFloat() / totalSeconds.toFloat()
+            (remainingSeconds.toFloat() / totalSeconds.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
         val minutes = remainingSeconds / 60
@@ -72,7 +76,7 @@ fun ActiveTimerCard(
             modifier = modifier
                 .fillMaxWidth()
                 .testTag("active_timer_card"),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (isFinished) {
                     MaterialTheme.colorScheme.secondaryContainer
@@ -88,30 +92,37 @@ fun ActiveTimerCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
-                                .background(MaterialTheme.colorScheme.surface, CircleShape),
+                                .size(34.dp)
+                                .background(
+                                    if (isFinished) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface,
+                                    CircleShape
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Timer,
                                 contentDescription = "Timer icon",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
+                                tint = if (isFinished) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
+                            val title = if (step.stepNumber > 0) "Step ${step.stepNumber}: ${step.actionName}" else step.actionName
                             Text(
-                                text = "Step ${step.stepNumber}: ${step.actionName}",
+                                text = title,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                             Text(
-                                text = if (isFinished) "Completed! Proceed with next step." else "Active Cooking Timer",
+                                text = if (isFinished) "⏰ Time's up! Ready for next step" else "Active cooking countdown",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                             )
@@ -140,13 +151,33 @@ fun ActiveTimerCard(
                     Text(
                         text = timeFormatted,
                         style = MaterialTheme.typography.headlineLarge.copy(
-                            fontSize = 36.sp,
+                            fontSize = 38.sp,
                             fontWeight = FontWeight.Black
                         ),
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Quick +1 min button
+                        if (!isFinished) {
+                            FilledTonalButton(
+                                onClick = onAddMinute,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.height(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreTime,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("+1m", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+
                         FilledTonalIconButton(
                             onClick = onReset,
                             modifier = Modifier.testTag("reset_timer_button")
@@ -181,7 +212,7 @@ fun ActiveTimerCard(
                         .fillMaxWidth()
                         .height(8.dp)
                         .clip(RoundedCornerShape(4.dp)),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (isFinished) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
                 )
             }

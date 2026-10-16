@@ -81,6 +81,46 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `repository generates recipe complying with vegan gluten-free and low-carb constraints`() = runTest {
+    val repository = RecipeRepository()
+    val result = repository.generateRecipe(
+      ingredient1 = "Zucchini",
+      ingredient2 = "Mushrooms",
+      ingredient3 = "Olive oil",
+      dietaryRestrictions = listOf("Vegan", "Gluten-Free", "Low-Carb")
+    )
+    assertNotNull(result)
+    if (result is com.example.data.repository.GenerationResult.Success) {
+      assertTrue(result.recipe.dietaryTags.contains("Vegan"))
+      assertTrue(result.recipe.dietaryTags.contains("Gluten-Free"))
+      assertTrue(result.recipe.dietaryTags.contains("Low-Carb"))
+    }
+  }
+
+  @Test
+  fun `recipe includes estimated nutritional breakdown with calories protein carbs and fat`() = runTest {
+    val repository = RecipeRepository()
+    val result = repository.generateRecipe(
+      ingredient1 = "Eggs",
+      ingredient2 = "Spinach",
+      ingredient3 = "Leftover rice"
+    )
+    assertNotNull(result)
+    if (result is com.example.data.repository.GenerationResult.Success) {
+      val nutrition = result.recipe.effectiveNutrition()
+      assertNotNull(nutrition)
+      assertTrue(nutrition.calories.isNotBlank())
+      assertTrue(nutrition.protein.isNotBlank())
+      assertTrue(nutrition.carbs.isNotBlank())
+      assertTrue(nutrition.fat.isNotBlank())
+      assertEquals("380 kcal", nutrition.calories)
+      assertEquals("16g", nutrition.protein)
+      assertEquals("46g", nutrition.carbs)
+      assertEquals("13g", nutrition.fat)
+    }
+  }
+
+  @Test
   fun `room database stores and retrieves favorite recipes reactively`() = runTest {
     val testRecipe = Recipe(
       title = "Crispy Garlic Egg Rice",

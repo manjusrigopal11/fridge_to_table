@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +10,7 @@ import com.example.data.local.FavoriteRecipeEntity
 import com.example.data.model.CommonIngredients
 import com.example.data.model.Recipe
 import com.example.data.model.RecipeStep
+import com.example.data.model.effectiveTimerSeconds
 import com.example.data.repository.FavoritesRepository
 import com.example.data.repository.GenerationResult
 import com.example.data.repository.RecipeRepository
@@ -43,6 +45,7 @@ data class RecipeUiState(
     val timerRemainingSeconds: Int = 0,
     val timerTotalSeconds: Int = 0,
     val isTimerRunning: Boolean = false,
+    val timerDialogStep: RecipeStep? = null,
     val showCookingMode: Boolean = false,
     val cookingModeStepIndex: Int = 0,
     val snackbarMessage: String? = null
@@ -60,7 +63,7 @@ data class RecipeUiState(
         }
 }
 
-class RecipeViewModel(
+class RecipeViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: RecipeRepository = RecipeRepository(),
     customFavoritesRepo: FavoritesRepository? = null
@@ -293,6 +296,10 @@ class RecipeViewModel(
         }
     }
 
+    fun clearDietaryRestrictions() {
+        _uiState.update { it.copy(selectedDietaryRestrictions = emptySet()) }
+    }
+
     fun clearInputs() {
         _uiState.update {
             it.copy(
@@ -345,10 +352,10 @@ class RecipeViewModel(
                             currentRecipe = result.recipe,
                             isLiveGemini = result.isFromLiveGemini,
                             isCurrentFavorite = isFav,
-                            snackbarMessage = if (result.isFromLiveGemini) {
+                            snackbarMessage = result.statusMessage ?: if (result.isFromLiveGemini) {
                                 "Recipe generated fresh by Gemini AI!"
                             } else {
-                                "Recipe generated! (Add GEMINI_API_KEY in Secrets for live cloud AI)"
+                                "Recipe generated via smart culinary engine"
                             }
                         )
                     }
@@ -392,17 +399,72 @@ class RecipeViewModel(
     }
 
     fun startStepTimer(step: RecipeStep) {
-        val seconds = step.timerSeconds ?: return
+        val seconds = step.effectiveTimerSeconds() ?: 180
+        startStepTimerWithDuration(step, seconds)
+    }
+
+    fun openTimerDialog(step: RecipeStep) {
+        _uiState.update { it.copy(timerDialogStep = step) }
+    }
+
+    fun openGeneralTimerDialog() {
+        val recipe = _uiState.value.currentRecipe
+        val defaultStep = RecipeStep(
+            stepNumber = 0,
+            actionName = "Cooking Timer",
+            description = recipe?.let { "Countdown timer for: ${it.title}" } ?: "Custom cooking timer",
+            timerSeconds = 180
+        )
+        _uiState.update { it.copy(timerDialogStep = defaultStep) }
+    }
+
+    fun closeTimerDialog() {
+        _uiState.update { it.copy(timerDialogStep = null) }
+    }
+
+    fun startStepTimerWithDuration(step: RecipeStep, durationSeconds: Int) {
+        val validSeconds = durationSeconds.coerceAtLeast(1)
         stopTimer()
+        val customStep = if (step.timerSeconds != validSeconds) {
+            step.copy(timerSeconds = validSeconds)
+        } else step
+
         _uiState.update {
             it.copy(
-                activeTimerStep = step,
-                timerTotalSeconds = seconds,
-                timerRemainingSeconds = seconds,
-                isTimerRunning = true
+                activeTimerStep = customStep,
+                timerTotalSeconds = validSeconds,
+                timerRemainingSeconds = validSeconds,
+                isTimerRunning = true,
+                timerDialogStep = null,
+                snackbarMessage = "⏱️ Timer started: ${formatDurationLabel(validSeconds)}"
             )
         }
         runTimer()
+    }
+
+    fun addTimeToTimer(secondsToAdd: Int) {
+        _uiState.update { current ->
+            if (current.activeTimerStep != null) {
+                val newRemaining = current.timerRemainingSeconds + secondsToAdd
+                val newTotal = current.timerTotalSeconds + secondsToAdd
+                val label = if (secondsToAdd >= 60) "+${secondsToAdd / 60}m" else "+${secondsToAdd}s"
+                current.copy(
+                    timerRemainingSeconds = newRemaining,
+                    timerTotalSeconds = newTotal,
+                    isTimerRunning = true,
+                    snackbarMessage = "Added $label to active timer"
+                )
+            } else current
+        }
+        if (!_uiState.value.isTimerRunning && _uiState.value.timerRemainingSeconds > 0) {
+            runTimer()
+        }
+    }
+
+    private fun formatDurationLabel(seconds: Int): String {
+        val m = seconds / 60
+        val s = seconds % 60
+        return if (m > 0 && s > 0) "${m}m ${s}s" else if (m > 0) "${m}m" else "${s}s"
     }
 
     fun pauseResumeTimer() {
@@ -449,10 +511,11 @@ class RecipeViewModel(
                 _uiState.update { current ->
                     val next = current.timerRemainingSeconds - 1
                     if (next <= 0) {
+                        triggerVibrate()
                         current.copy(
                             timerRemainingSeconds = 0,
                             isTimerRunning = false,
-                            snackbarMessage = "⏰ Step timer finished! Ready for next step."
+                            snackbarMessage = "⏰ Step timer finished! Ready for the next cooking step."
                         )
                     } else {
                         current.copy(timerRemainingSeconds = next)
@@ -460,6 +523,29 @@ class RecipeViewModel(
                 }
             }
         }
+    }
+
+    private fun triggerVibrate() {
+        try {
+            val app = getApplication<Application>()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val vm = app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator?.vibrate(
+                    android.os.VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 400), -1)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = app.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(
+                        android.os.VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 400), -1)
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(longArrayOf(0, 300, 150, 400), -1)
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun stopTimer() {

@@ -21,13 +21,17 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BakeryDining
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.filled.Dining
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Fireplace
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.RoomService
@@ -37,6 +41,9 @@ import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TakeoutDining
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -44,6 +51,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,6 +62,7 @@ import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.example.data.model.effectiveTimerSeconds
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +91,7 @@ fun RecipeDetailCard(
     onToggleFavorite: () -> Unit = {},
     onShare: () -> Unit,
     onCopy: () -> Unit,
+    onOpenTimerDialog: (RecipeStep) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -249,6 +259,100 @@ fun RecipeDetailCard(
                 )
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Estimated Nutrition Breakdown Card
+            val nutrition = recipe.effectiveNutrition()
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("recipe_nutrition_section"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Estimated Nutrition",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                        ) {
+                            Text(
+                                text = "Per serving",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        NutritionStatItem(
+                            label = "Calories",
+                            value = nutrition.calories,
+                            icon = Icons.Default.LocalFireDepartment,
+                            accentColor = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("nutrition_calories")
+                        )
+                        NutritionStatItem(
+                            label = "Protein",
+                            value = nutrition.protein,
+                            icon = Icons.Default.FitnessCenter,
+                            accentColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("nutrition_protein")
+                        )
+                        NutritionStatItem(
+                            label = "Carbs",
+                            value = nutrition.carbs,
+                            icon = Icons.Default.BakeryDining,
+                            accentColor = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("nutrition_carbs")
+                        )
+                        NutritionStatItem(
+                            label = "Fat",
+                            value = nutrition.fat,
+                            icon = Icons.Default.WaterDrop,
+                            accentColor = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("nutrition_fat")
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // Quick Actions Bar
@@ -350,13 +454,84 @@ fun RecipeDetailCard(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Timers Summary Row
+            val timedSteps = recipe.instructions.filter { (it.effectiveTimerSeconds() ?: 0) > 0 }
+            if (timedSteps.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Timer,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Instruction Timers (${timedSteps.size} detected)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            Text(
+                                text = "Tap to countdown",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            timedSteps.forEach { step ->
+                                val sec = step.effectiveTimerSeconds() ?: 60
+                                val min = sec / 60
+                                val s = sec % 60
+                                val timeStr = if (min > 0 && s > 0) "${min}m ${s}s" else if (min > 0) "${min}m" else "${s}s"
+                                FilledTonalButton(
+                                    onClick = { onOpenTimerDialog(step) },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.height(34.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Step ${step.stepNumber}: $timeStr",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
             recipe.instructions.forEach { step ->
                 val isStepDone = completedSteps.contains(step.stepNumber)
                 StepCard(
                     step = step,
                     isCompleted = isStepDone,
                     onToggleComplete = { onToggleStep(step.stepNumber) },
-                    onStartTimer = { onStartTimer(step) }
+                    onStartTimer = { onStartTimer(step) },
+                    onOpenTimerDialog = { onOpenTimerDialog(step) }
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
@@ -512,6 +687,47 @@ private fun StatBadge(
 }
 
 @Composable
+private fun NutritionStatItem(
+    label: String,
+    value: String,
+    icon: ImageVector,
+    accentColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+@Composable
 private fun IngredientCheckRow(
     text: String,
     isChecked: Boolean,
@@ -548,7 +764,8 @@ private fun StepCard(
     step: RecipeStep,
     isCompleted: Boolean,
     onToggleComplete: () -> Unit,
-    onStartTimer: () -> Unit
+    onStartTimer: () -> Unit,
+    onOpenTimerDialog: () -> Unit
 ) {
     val cardBg by animateColorAsState(
         targetValue = if (isCompleted) {
@@ -631,26 +848,63 @@ private fun StepCard(
                 lineHeight = 22.sp
             )
 
-            if (step.timerSeconds != null && step.timerSeconds > 0) {
+            // Timer Action Area based on AI instructions or custom setup
+            val effectiveSeconds = step.effectiveTimerSeconds()
+            if (effectiveSeconds != null && effectiveSeconds > 0) {
                 Spacer(modifier = Modifier.height(10.dp))
-                val minutes = step.timerSeconds / 60
-                val seconds = step.timerSeconds % 60
-                val formatted = if (minutes > 0) "${minutes}m ${seconds}s" else "${seconds}s"
+                val minutes = effectiveSeconds / 60
+                val seconds = effectiveSeconds % 60
+                val formatted = if (minutes > 0 && seconds > 0) "${minutes}m ${seconds}s" else if (minutes > 0) "${minutes}m" else "${seconds}s"
 
-                FilledTonalButton(
-                    onClick = onStartTimer,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = onStartTimer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Start Timer ($formatted)",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+
+                    FilledTonalIconButton(
+                        onClick = onOpenTimerDialog,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = "Adjust timer duration",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onOpenTimerDialog,
                     shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.height(36.dp)
+                    modifier = Modifier.height(32.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Timer,
+                        imageVector = Icons.Default.MoreTime,
                         contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Start Timer ($formatted)",
-                        style = MaterialTheme.typography.labelSmall
+                        text = "Set Step Timer",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 11.sp
                     )
                 }
             }
