@@ -178,25 +178,21 @@ export default function App() {
       return;
     }
 
-    const newItems = names.map((name) => {
-      const existing = inventory.find((item) => item.name === name);
-
-      return {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        quantity: Math.max(1, Number(quantity) || 1),
-        expiryDate,
-        used: false,
-        ...(existing ? {} : {})
-      };
-    });
+    const newItems = names.map((name) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      quantity: Math.max(1, Number(quantity) || 1),
+      expiryDate,
+      used: false
+    }));
 
     setInventory((previous) => [
       ...previous,
       ...newItems.filter(
-        (item) => !previous.some(
-          (existing) => existing.name === item.name && !existing.used
-        )
+        (item) =>
+          !previous.some(
+            (existing) => existing.name === item.name && !existing.used
+          )
       )
     ]);
 
@@ -245,11 +241,12 @@ export default function App() {
         (name) => !availableNames.includes(name)
       );
 
-      const urgentCount = activeItems.filter((item) =>
-        have.includes(item.name) &&
-        item.expiryDate &&
-        daysUntil(item.expiryDate) >= 0 &&
-        daysUntil(item.expiryDate) <= 3
+      const urgentCount = activeItems.filter(
+        (item) =>
+          have.includes(item.name) &&
+          item.expiryDate &&
+          daysUntil(item.expiryDate) >= 0 &&
+          daysUntil(item.expiryDate) <= 3
       ).length;
 
       return { ...recipe, have, missing, urgentCount };
@@ -262,9 +259,19 @@ export default function App() {
         a.missing.length - b.missing.length
     );
 
-  const filteredRecipes = matches.filter((recipe) =>
-    recipe.name.toLowerCase().includes(search.toLowerCase())
-  );
+  // FIX: Search by recipe name OR ingredient name.
+  const filteredRecipes = matches.filter((recipe) => {
+    const searchText = search.trim().toLowerCase();
+
+    if (!searchText) return true;
+
+    return (
+      recipe.name.toLowerCase().includes(searchText) ||
+      recipe.items.some((ingredient) =>
+        ingredient.toLowerCase().includes(searchText)
+      )
+    );
+  });
 
   const useRecipe = (recipe) => {
     setInventory((previous) =>
@@ -538,13 +545,13 @@ export default function App() {
           style={{ ...styles.input, marginTop: 6, marginBottom: 14 }}
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search by recipe name..."
+          placeholder="Search by recipe name or ingredient..."
         />
 
         {filteredRecipes.length === 0 ? (
           <p>
-            No matching recipes found. Try adding more ingredients or a
-            different search term.
+            No matching recipes found. Try adding the ingredient to your fridge
+            or searching for another recipe.
           </p>
         ) : (
           filteredRecipes.map((recipe) => (
@@ -571,14 +578,12 @@ export default function App() {
               )}
 
               <p>
-                <strong>Available:</strong>{' '}
-                {recipe.have.join(', ')}
+                <strong>Available:</strong> {recipe.have.join(', ')}
               </p>
 
               {recipe.missing.length > 0 && (
                 <p>
-                  <strong>Still needed:</strong>{' '}
-                  {recipe.missing.join(', ')}
+                  <strong>Still needed:</strong> {recipe.missing.join(', ')}
                 </p>
               )}
 
@@ -609,8 +614,7 @@ export default function App() {
             <strong>Cooking time:</strong> {selectedRecipe.time}
           </p>
           <p>
-            <strong>Ingredients:</strong>{' '}
-            {selectedRecipe.items.join(', ')}
+            <strong>Ingredients:</strong> {selectedRecipe.items.join(', ')}
           </p>
           <p>
             <strong>Instructions:</strong> {selectedRecipe.instructions}
